@@ -8,13 +8,16 @@ const app = express()
 
 logger.info('connecting to', config.MONGODB_URI)
 
-mongoose.connect(config.MONGODB_URI)
-  .then(() => {
+const connectToDatabase = async () => {
+  try {
+    await mongoose.connect(config.MONGODB_URI)
     logger.info('connected to MongoDB')
-  })
-  .catch((error) => {
+  } catch (error) {
     logger.error('error connecting to MongoDB:', error.message)
-  })
+  }
+}
+
+connectToDatabase()
 
 app.use(express.json())
 
