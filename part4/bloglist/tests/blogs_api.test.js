@@ -2,8 +2,12 @@ const { test, describe, after, beforeEach } = require('node:test')
 const assert = require('node:assert')
 const mongoose = require('mongoose')
 const supertest = require('supertest')
+const bcrypt = require('bcryptjs')
+const jwt = require('jsonwebtoken')
 const app = require('../app')
+const config = require('../utils/config')
 const Blog = require('../models/blog')
+const User = require('../models/user')
 
 const api = supertest(app)
 
@@ -22,9 +26,20 @@ const initialBlogs = [
   },
 ]
 
+let token
+
 beforeEach(async () => {
   await Blog.deleteMany({})
-  await Blog.insertMany(initialBlogs)
+  await User.deleteMany({})
+
+  const passwordHash = await bcrypt.hash('sekret', 10)
+  const user = new User({ username: 'root', passwordHash })
+  await user.save()
+
+  token = jwt.sign({ username: user.username, id: user._id }, config.SECRET)
+
+  const blogsWithUser = initialBlogs.map((blog) => ({ ...blog, user: user.id }))
+  await Blog.insertMany(blogsWithUser)
 })
 
 describe('GET /api/blogs', () => {
@@ -62,6 +77,7 @@ describe('POST /api/blogs', () => {
 
     await api
       .post('/api/blogs')
+      .set('Authorization', `Bearer ${token}`)
       .send(newBlog)
       .expect(201)
       .expect('Content-Type', /application\/json/)
@@ -77,20 +93,77 @@ describe('POST /api/blogs', () => {
     assert.strictEqual(addedBlog.url, newBlog.url)
     assert.strictEqual(addedBlog.likes, newBlog.likes)
   })
+
+  test('fails with status code 401 if token is not provided', async () => {
+    const newBlog = {
+      title: 'Type Wars',
+      author: 'Robert C. Martin',
+      url: 'http://blog.cleancoder.com/uncle-bob/2016/05/01/TypeWars.html',
+      likes: 2,
+    }
+
+    const result = await api
+      .post('/api/blogs')
+      .send(newBlog)
+      .expect(401)
+      .expect('Content-Type', /application\/json/)
+
+    assert.strictEqual(result.body.error, 'token invalid')
+
+    const blogsAtEnd = await Blog.find({})
+    assert.strictEqual(blogsAtEnd.length, initialBlogs.length)
+  })
 })
 
 describe('DELETE /api/blogs/:id', () => {
-  test('succeeds with status code 204 if id is valid', async () => {
+  test('succeeds with status code 204 if id is valid and token belongs to creator', async () => {
     const blogsAtStart = await Blog.find({})
     const blogToDelete = blogsAtStart[0]
 
-    await api.delete(`/api/blogs/${blogToDelete.id}`).expect(204)
+    await api
+      .delete(`/api/blogs/${blogToDelete.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .expect(204)
 
     const blogsAtEnd = await Blog.find({})
     assert.strictEqual(blogsAtEnd.length, initialBlogs.length - 1)
 
     const titles = blogsAtEnd.map((blog) => blog.title)
     assert.ok(!titles.includes(blogToDelete.title))
+  })
+
+  test('fails with status code 401 if token is not provided', async () => {
+    const blogsAtStart = await Blog.find({})
+    const blogToDelete = blogsAtStart[0]
+
+    await api.delete(`/api/blogs/${blogToDelete.id}`).expect(401)
+
+    const blogsAtEnd = await Blog.find({})
+    assert.strictEqual(blogsAtEnd.length, initialBlogs.length)
+  })
+
+  test('fails with status code 401 if token does not belong to the creator', async () => {
+    const passwordHash = await bcrypt.hash('sekret', 10)
+    const otherUser = new User({ username: 'otheruser', passwordHash })
+    await otherUser.save()
+    const otherToken = jwt.sign(
+      { username: otherUser.username, id: otherUser._id },
+      config.SECRET
+    )
+
+    const blogsAtStart = await Blog.find({})
+    const blogToDelete = blogsAtStart[0]
+
+    const result = await api
+      .delete(`/api/blogs/${blogToDelete.id}`)
+      .set('Authorization', `Bearer ${otherToken}`)
+      .expect(401)
+      .expect('Content-Type', /application\/json/)
+
+    assert.strictEqual(result.body.error, 'invalid user')
+
+    const blogsAtEnd = await Blog.find({})
+    assert.strictEqual(blogsAtEnd.length, initialBlogs.length)
   })
 })
 
