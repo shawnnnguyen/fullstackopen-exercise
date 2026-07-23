@@ -79,6 +79,46 @@ describe('POST /api/blogs', () => {
   })
 })
 
+describe('DELETE /api/blogs/:id', () => {
+  test('succeeds with status code 204 if id is valid', async () => {
+    const blogsAtStart = await Blog.find({})
+    const blogToDelete = blogsAtStart[0]
+
+    await api.delete(`/api/blogs/${blogToDelete.id}`).expect(204)
+
+    const blogsAtEnd = await Blog.find({})
+    assert.strictEqual(blogsAtEnd.length, initialBlogs.length - 1)
+
+    const titles = blogsAtEnd.map((blog) => blog.title)
+    assert.ok(!titles.includes(blogToDelete.title))
+  })
+})
+
+describe('PUT /api/blogs/:id', () => {
+  test('succeeds in updating the number of likes', async () => {
+    const blogsAtStart = await Blog.find({})
+    const blogToUpdate = blogsAtStart[0]
+
+    const updatedBlog = {
+      title: blogToUpdate.title,
+      author: blogToUpdate.author,
+      url: blogToUpdate.url,
+      likes: blogToUpdate.likes + 1,
+    }
+
+    const response = await api
+      .put(`/api/blogs/${blogToUpdate.id}`)
+      .send(updatedBlog)
+      .expect(200)
+      .expect('Content-Type', /application\/json/)
+
+    assert.strictEqual(response.body.likes, blogToUpdate.likes + 1)
+
+    const blogInDb = await Blog.findById(blogToUpdate.id)
+    assert.strictEqual(blogInDb.likes, blogToUpdate.likes + 1)
+  })
+})
+
 after(async () => {
   await mongoose.connection.close()
 })
